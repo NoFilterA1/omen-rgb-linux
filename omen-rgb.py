@@ -8,14 +8,19 @@ Features:
  - Single-instance system tray
  - Persist last mode via QSettings
  - High-DPI scaling
-"""
 
+МОДИФИКАЦИЯ: Удалены Ambient и Music режимы. Исправлен RainbowThread.
+"""
 import os
 import re
 import sys
 import time
 from pathlib import Path
 from threading import Event
+
+# Удалены импорты для pulsectl, mss, numpy
+# Режимы Ambient и Music полностью удалены
+
 from PyQt5.QtCore import Qt, QThread, QSettings, QCoreApplication, pyqtSlot, QTimer
 from PyQt5.QtGui import QColor, QIcon
 from PyQt5.QtWidgets import (
@@ -30,7 +35,7 @@ ORG_NAME = "OmenTools"
 ZONE_PATH = Path("/sys/devices/platform/hp-wmi/rgb_zones/zone00")
 THEME_COLOR_PATH = Path.home() / ".config/hypr/themes/colors.conf"
 STATIC_DURATION_MS = 100   # fast static transition
-RAIN_DELAY_MS = 10         # very fast rainbow tick delay
+RAIN_DELAY_MS = 50         # very fast rainbow tick delay
 PRESETS = {
     "Red": "ff0000", "Green": "00ff00", "Blue": "0000ff",
     "Purple": "800080", "White": "ffffff", "Orange": "ff7f00",
@@ -63,6 +68,7 @@ def rgb_to_hex(c):
 
 _current_hardware_color = None # Renamed from _last_color
 
+# Прямая запись в sysfs, так как скрипт должен быть запущен с привилегиями
 def write_color(col_hex):
     """Writes a color directly to the sysfs file, assuming udev rules are set."""
     global _current_hardware_color
@@ -75,6 +81,7 @@ def write_color(col_hex):
     except Exception as e:
         print(f"[ERR] Error writing color: {e}", file=sys.stderr)
 
+# Smooth transition over STATIC_DURATION_MS
 def set_color(col_hex, duration_ms=None):
     global _current_hardware_color
     if duration_ms and _current_hardware_color and _current_hardware_color.lower() != col_hex.lower():
@@ -120,7 +127,7 @@ class ModeThread(QThread):
         self.stop_event.set()
         self.wait()
 
-# --- RainbowThread ---
+# --- ОСНОВНОЕ ИСПРАВЛЕНИЕ: RainbowThread ---
 class RainbowThread(QThread):
     def __init__(self, delay_ms):
         super().__init__()
@@ -132,9 +139,9 @@ class RainbowThread(QThread):
         print("[DEBUG] Standalone RainbowThread started run loop.", file=sys.stderr)
         try:
             while not self.stop_event.is_set():
-
+                # Генерация цвета через HSV и конвертация в HEX
                 col = QColor.fromHsv(self.hue % 360, 255, 255).name()[1:]
-                write_color(col)
+                write_color(col)  # Используем универсальную функцию записи
                 self.hue += 1
                 self.stop_event.wait(self.delay_s)
         except Exception as e:
@@ -232,7 +239,19 @@ class RGBController(QWidget):
         menu.addAction(QAction("Show", self, triggered=self.show))
         menu.addAction(QAction("Exit", self, triggered=self.exit_app))
         self.tray.setContextMenu(menu)
+        
+        self.tray.activated.connect(self.tray_clicked)
+        
         self.tray.show()
+
+    def tray_clicked(self, reason):
+                    if reason == QSystemTrayIcon.Trigger:  # Левый клик
+                        if self.isVisible() and not self.isMinimized():
+                            self.hide()
+                        else:
+                            self.show()
+                            self.raise_()  # 👈 поднять поверх других окон
+                            self.activateWindow()  # 👈 дать фокус
 
     def init_ui(self):
         self.setWindowTitle("HP OMEN RGB Controller")
@@ -240,6 +259,7 @@ class RGBController(QWidget):
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         
+        # Убрана категория "Interactive" с режимами Ambient и Music
         modes_structure = {
             " Static": {
                 "Static Color": ""
@@ -301,6 +321,7 @@ class RGBController(QWidget):
             self.start_thread(NewYearsThread(500))
         elif mode == "Police":
             self.start_thread(PoliceThread(100))
+        # Режимы Ambient и Music удалены
 
     def on_mode(self, item, _):
         if not item.parent():
@@ -372,10 +393,8 @@ class RGBController(QWidget):
 # ---------- ENTRY ---------- #
 if __name__ == "__main__":
     import traceback
-    import sys # Нужно импортировать sys для sys.stderr
 
-    # Эту строку теперь можно удалить, так как она больше не нужна
-    # log_file = "/home/user/.gemini/tmp/b98d692c4574a80e508cf6fa38e6f27ae5348e616448edaa7fe675e363669fd2/kbrgb_crash.log"
+    log_file = "/home/user/.gemini/tmp/b98d692c4574a80e508cf6fa38e6f27ae5348e616448edaa7fe675e363669fd2/kbrgb_crash.log"
 
     try:
         if os.environ.get("WAYLAND_DISPLAY"):
@@ -389,12 +408,6 @@ if __name__ == "__main__":
         controller = RGBController()
         sys.exit(app.exec_())
     except Exception as e:
-        # --- ИЗМЕНЕННЫЙ БЛОК EXCEPT ---
-        print(f"An unexpected error occurred: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        # -----------------------------
-        
-        # Старый код, который вы удалили:
-        # with open(log_file, "w") as f:
-        #     f.write(f"An unexpected error occurred: {e}\n")
-        #     f.write(traceback.format_exc())
+        with open(log_file, "w") as f:
+            f.write(f"An unexpected error occurred: {e}\n")
+            f.write(traceback.format_exc())
